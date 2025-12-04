@@ -2,6 +2,8 @@ import torch
 from pathlib import Path
 from typing import Optional
 
+
+
 import numpy as np
 from PIL import Image
 
@@ -23,7 +25,7 @@ COLOR = sv.ColorPalette.from_hex([
     "#9999ff", "#3399ff", "#66ffff", "#33ff99", "#66ff66", "#99ff00"
 ])
 
-
+z
 def annotate(image: Image.Image, detections: sv.Detections, label: Optional[str] = None) -> Image.Image:
     text_scale = sv.calculate_optimal_text_scale(resolution_wh=image.size)
 
