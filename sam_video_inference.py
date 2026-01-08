@@ -16,9 +16,9 @@ import imageio.v3 as iio  # pip install "imageio[ffmpeg]"
 
 
 # --------- CONFIGURE THESE ---------
-VIDEO_PATH = "/home/evox5090ia/datasets/smcb_2025-07-31-06-33-34_yolo/videos/000014.mp4"
-TEXT_PROMPT = "trash left near container"
-OUTPUT_PATH = "/home/evox5090ia/sam3/sam3_outputs/000014_trash_left_near_container.mp4"
+VIDEO_PATH = "/home/evox5090ia/Downloads/2025-10-01_03-48-58_d_59.mp4"
+TEXT_PROMPT = "license plates"
+OUTPUT_PATH = "/home/evox5090ia/sam3/sam3_outputs/2025-10-01_03-48-58_d_159_waste_container.mp4"
 
 CONF_THRESH = 0.05
 # Use your real video FPS if you know it; otherwise 25 or 30 are usually OK.
