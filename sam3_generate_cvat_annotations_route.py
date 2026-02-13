@@ -67,14 +67,14 @@ import imageio.v3 as iio
 
 # ================== HARD-CODED CONFIG ==================
 
-DATASET_ROOT = Path("/home/evox5090ia/sumasaojoao/2025-12-22_08-45-47").resolve()
+DATASET_ROOT = Path("/home/evox5090ia/Downloads/2026-01-16_13-49-51").resolve()
 
 VIDEO_MKV_NAME = "video.mkv"
 VIDEO_MP4_NAME = "video.mp4"
 TEMP_MP4_NAME = "_sam3_tmp_video.mp4"
 
-OUTPUT_XML_NAME = "annotations.xml"
-OUTPUT_VIDEO_NAME = "annotated.mp4"
+OUTPUT_XML_NAME = "annotations_sam.xml"
+OUTPUT_VIDEO_NAME = "annotated_sam.mp4"
 
 CONF_THRESH = 0.05
 

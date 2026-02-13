@@ -11,9 +11,9 @@ from sam3.model_builder import build_sam3_image_model
 from sam3.model.sam3_image_processor import Sam3Processor
 
 # --------- CONFIGURE THESE ---------
-IMAGE_PATH = "/home/evox5090ia/Pictures/sam_test.png"
-TEXT_PROMPT = "license plate"
-OUTPUT_PATH = "/home/evox5090ia/Pictures/sam_test_out.png"
+IMAGE_PATH = "/home/evox5090ia/Pictures/Screenshots/baldear_4.png"
+TEXT_PROMPT = "waste"
+OUTPUT_PATH = "/home/evox5090ia/Pictures/Screenshots/baldear_4_out.png"
 # -----------------------------------
 
 # Color palette for Supervision

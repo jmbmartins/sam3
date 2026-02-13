@@ -12,7 +12,7 @@ from sam3.model.sam3_image_processor import Sam3Processor
 
 
 # ================= CONFIG =================
-ROOT_DIR = Path("/home/evox5090ia/Downloads/2026-01-16_13-49-51/video/direita/")
+ROOT_DIR = Path("/home/evox5090ia/Downloads/2026-01-20_08-44-42/video/direita/")
 
 PROMPTS: Dict[int, str] = {
     0: "person",
@@ -85,35 +85,35 @@ def main():
     processor = Sam3Processor(model)
     print("SAM3 loaded.\n")
 
-    # each "videoid" dir: .../direita/<id>/
-    video_dirs = sorted(d for d in ROOT_DIR.iterdir() if d.is_dir())
+    # Loop through each video folder (e.g. 0, 1, 140, etc.)
+    video_dirs = sorted(d for d in ROOT_DIR.iterdir() if d.is_dir() and d.name.isdigit())
 
     for video_dir in video_dirs:
-        frames_dir = video_dir / "frames"
-        if not frames_dir.is_dir():
-            continue
-
-        # output alongside frames/
-        frames_ano_dir = video_dir / "frames_ano"
-        frames_ano_dir.mkdir(parents=True, exist_ok=True)
-
+        # Input frames are directly inside the <videoid> folder (e.g., 000000.png)
         frame_paths = sorted(
-            p for p in frames_dir.iterdir()
+            p for p in video_dir.iterdir()
             if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
         )
 
-        print(f"[VIDEO {video_dir.name}] {len(frame_paths)} frames -> {frames_ano_dir}")
+        # Create output directories
+        frames_not_blurred_dir = video_dir / "frames"
+        frames_ano_dir = video_dir / "frames_ano"
+        frames_not_blurred_dir.mkdir(parents=True, exist_ok=True)
+        frames_ano_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"[VIDEO {video_dir.name}] {len(frame_paths)} frames -> {frames_not_blurred_dir}, {frames_ano_dir}")
 
         for frame_path in frame_paths:
-            out_path = frames_ano_dir / frame_path.name
+            out_path_not_blurred = frames_not_blurred_dir / frame_path.name
+            out_path_ano = frames_ano_dir / frame_path.name
 
             image = load_rgb(frame_path)
             if image is None:
-                # if can't open, just copy the raw file
+                # If can't open, just copy the raw file to frames_not_blurred
                 try:
-                    shutil.copy2(frame_path, out_path)
+                    shutil.copy2(frame_path, out_path_not_blurred)
                 except Exception as e:
-                    print(f"[WARN] Failed to copy {frame_path} -> {out_path}: {e}")
+                    print(f"[WARN] Failed to copy {frame_path} -> {out_path_not_blurred}: {e}")
                 continue
 
             all_dets = []
@@ -132,13 +132,15 @@ def main():
                     all_dets.append(det)
 
             if not all_dets:
-                # keep 1:1 structure even without detections
-                image.save(out_path)
+                # Keep the image unchanged, so copy it to frames_not_blurred
+                image.save(out_path_not_blurred)
                 continue
 
             detections = sv.Detections.merge(all_dets)
             blacked = blackout_by_class(image, detections, BLACKOUT_CLASS_IDS)
-            blacked.save(out_path)
+
+            # Save the modified frame to frames_ano
+            blacked.save(out_path_ano)
 
         print(f"[VIDEO {video_dir.name}] done")
 

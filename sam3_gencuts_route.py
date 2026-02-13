@@ -9,14 +9,13 @@ from transformers import Sam3VideoModel, Sam3VideoProcessor
 # --- ESSENTIAL HYPERPARAMETER CONFIGURATION ---
 # ==============================================================================
 
-INPUT_DIR = Path("/home/evox5090ia/sumasaojoao/2025-12-22_08-45-47/video/esquerda/")
-OUTPUT_DIR = Path("/home/evox5090ia/sumasaojoao/2025-12-22_08-45-47/video/esquerda/")
+INPUT_DIR = Path("/home/evox5090ia/Downloads/2026-01-16_13-49-51/video/esquerda/")
+OUTPUT_DIR = Path("/home/evox5090ia/Downloads/2026-01-16_13-49-51/video/esquerda/")
 
-# NEW: Start processing only from this source video id (inclusive).
-# Example: 1063 means it will process 1063, 1064, 1065, ...
+# Start processing only from this source video id (inclusive).
 START_FROM_SOURCE_ID = 0  # set this as needed
 
-# SAM3 prompt (as requested)
+# SAM3 prompt
 SAM3_PROMPT = "waste container"
 
 # Detection / processing thresholds
@@ -30,13 +29,20 @@ SCENE_THR = 0.985
 # Skip long videos
 MAX_VIDEO_SECONDS = 120  # seconds
 
-# NEW: Also export a visualization video with bboxes
+# Also export a visualization video with bboxes
 EXPORT_SHOWDET = True
 SHOWDET_FILENAME = "video_showdet.mp4"  # created alongside video.mkv
 SHOWDET_CODEC = "libx264"
 SHOWDET_CRF = 28
 SHOWDET_PRESET = "ultrafast"
 SHOWDET_SCALE_WIDTH = None  # e.g. 960 to downscale for lighter CPU, or None to keep original
+
+# -----------------------------
+# MOST SIGNIFICANT CHANGE:
+# CHUNKED processing (avoid decoding entire video into RAM)
+# -----------------------------
+CHUNK_FRAMES = 180     # ~6s @30fps (tune 120..300)
+CHUNK_OVERLAP = 40     # overlap so we don't miss detections across boundaries
 
 # Internal
 EFFECTIVE_GAP = BUFFER_BEFORE + BUFFER_AFTER - 1
@@ -55,7 +61,6 @@ sam3_model = Sam3VideoModel.from_pretrained("facebook/sam3").to(device, dtype=dt
 sam3_processor = Sam3VideoProcessor.from_pretrained("facebook/sam3")
 print("SAM3 loaded.\n")
 
-
 # ==============================================================================
 # --- UTILITY FUNCTIONS ---
 # ==============================================================================
@@ -70,6 +75,7 @@ def is_same_scene(a: np.ndarray, b: np.ndarray, thr: float = SCENE_THR) -> bool:
 
 
 def extract_source_video_id(video_path: Path) -> Optional[int]:
+    # expects trailing _<digits>.mkv
     m = re.search(r"_([0-9]+)\.mkv$", video_path.name)
     return int(m.group(1)) if m else None
 
@@ -128,9 +134,6 @@ def estimate_duration_by_partial_decode(video_path: Path, max_frames: int = 300)
         return -1.0
 
 
-# -----------------------------
-# MINIMAL FIX: safe FPS rate
-# -----------------------------
 def _safe_rate_from_stream(v, default: Fraction = Fraction(25, 1)) -> Fraction:
     r = getattr(v, "average_rate", None) or getattr(v, "base_rate", None)
     if r is None:
@@ -145,30 +148,6 @@ def _safe_rate_from_stream(v, default: Fraction = Fraction(25, 1)) -> Fraction:
         return Fraction(str(float(r)))
     except Exception:
         return default
-
-
-# -----------------------------
-# NEW: resume output folder id
-# -----------------------------
-def get_next_video_id(output_dir: Path, required_file: str = "video.mkv") -> int:
-    """
-    Returns next clip folder id to use (max existing numeric folder + 1).
-    Only counts numeric folders that contain required_file (default: video.mkv).
-    """
-    max_id = 0
-    if not output_dir.exists():
-        return 1
-
-    for p in output_dir.iterdir():
-        if not p.is_dir():
-            continue
-        if not p.name.isdigit():
-            continue
-        if required_file and not (p / required_file).exists():
-            continue
-        max_id = max(max_id, int(p.name))
-
-    return max_id + 1
 
 
 def export_segment(video_path: Path, keep_pts: np.ndarray, out_path: Path,
@@ -264,27 +243,6 @@ def export_showdet_video_from_source(
         oc.close()
 
 
-def decode_video_to_frames_and_pts(video_path: Path) -> Tuple[List[np.ndarray], List[int]]:
-    frames: List[np.ndarray] = []
-    pts_all: List[int] = []
-
-    container = av.open(str(video_path))
-    stream = container.streams.video[0]
-
-    frame_idx = -1
-    for packet in container.demux(stream):
-        for frame in packet.decode():
-            frame_idx += 1
-            pts_all.append(int(frame.pts if frame.pts is not None else frame_idx))
-            img = frame.to_ndarray(format="bgr24")
-            if img.dtype != np.uint8:
-                img = img.astype(np.uint8)
-            frames.append(img)
-
-    container.close()
-    return frames, pts_all
-
-
 def run_sam3_for_prompt(
     model: Sam3VideoModel,
     processor: Sam3VideoProcessor,
@@ -369,6 +327,93 @@ def run_sam3_for_prompt(
 
 
 # ==============================================================================
+# --- STREAM + CHUNK SAM3 (no full video in RAM) ---
+# ==============================================================================
+
+def iter_video_frames_bgr_and_pts(video_path: Path):
+    with av.open(str(video_path)) as container:
+        stream = container.streams.video[0]
+        frame_idx = -1
+        for packet in container.demux(stream):
+            for frame in packet.decode():
+                frame_idx += 1
+                pts = int(frame.pts if frame.pts is not None else frame_idx)
+                img = frame.to_ndarray(format="bgr24")
+                if img.dtype != np.uint8:
+                    img = img.astype(np.uint8)
+                yield frame_idx, pts, img
+
+
+def run_sam3_for_prompt_chunked(
+    model: Sam3VideoModel,
+    processor: Sam3VideoProcessor,
+    device: torch.device,
+    dtype: torch.dtype,
+    video_path: Path,
+    prompt: str,
+    conf_thresh: float,
+    chunk_frames: int = CHUNK_FRAMES,
+    chunk_overlap: int = CHUNK_OVERLAP,
+) -> Tuple[List[int], Dict[int, List[Dict[str, Any]]], List[int]]:
+    all_pts: List[int] = []
+    det_set: set = set()
+    frame_dets_global: Dict[int, List[Dict[str, Any]]] = {}
+
+    buf_frames: List[np.ndarray] = []
+    buf_global_idxs: List[int] = []
+
+    for gidx, pts, img in iter_video_frames_bgr_and_pts(video_path):
+        all_pts.append(pts)
+        buf_frames.append(img)
+        buf_global_idxs.append(gidx)
+
+        if len(buf_frames) < chunk_frames:
+            continue
+
+        det_local, dets_local = run_sam3_for_prompt(
+            model=model,
+            processor=processor,
+            device=device,
+            dtype=dtype,
+            frames_bgr=buf_frames,
+            prompt=prompt,
+            conf_thresh=conf_thresh,
+        )
+
+        for li in det_local:
+            det_set.add(int(buf_global_idxs[li]))
+        for li, dets in dets_local.items():
+            frame_dets_global[int(buf_global_idxs[li])] = dets
+
+        keep = max(0, int(chunk_overlap))
+        if keep > 0:
+            buf_frames = buf_frames[-keep:]
+            buf_global_idxs = buf_global_idxs[-keep:]
+        else:
+            buf_frames = []
+            buf_global_idxs = []
+
+    if buf_frames:
+        det_local, dets_local = run_sam3_for_prompt(
+            model=model,
+            processor=processor,
+            device=device,
+            dtype=dtype,
+            frames_bgr=buf_frames,
+            prompt=prompt,
+            conf_thresh=conf_thresh,
+        )
+        for li in det_local:
+            det_set.add(int(buf_global_idxs[li]))
+        for li, dets in dets_local.items():
+            frame_dets_global[int(buf_global_idxs[li])] = dets
+
+    detections_global = sorted(det_set)
+    frame_dets_global = {k: v for k, v in frame_dets_global.items() if v}
+    return detections_global, frame_dets_global, all_pts
+
+
+# ==============================================================================
 # --- MAIN LOOP ---
 # ==============================================================================
 
@@ -380,9 +425,8 @@ def sort_key(p: Path):
 
 video_files = sorted(video_files, key=sort_key)
 
-# NEW: resume from last generated output folder (instead of resetting to 1)
-video_id = get_next_video_id(OUTPUT_DIR, required_file="video.mkv")
-print(f"Resuming: next output video_id folder will be {video_id}")
+# Keep your original duplicate check variable (it works across saved clips)
+last_cut_last_frame = None
 
 for video_path in video_files:
     source_id = extract_source_video_id(video_path)
@@ -390,7 +434,6 @@ for video_path in video_files:
         print(f"\nSkipping {video_path.name}: could not extract trailing numeric id for ordering.")
         continue
 
-    # NEW: skip until we reach START_FROM_SOURCE_ID
     if source_id < START_FROM_SOURCE_ID:
         continue
 
@@ -404,24 +447,22 @@ for video_path in video_files:
         print(f"Skipping {video_path.name}: duration {duration_s:.2f}s > {MAX_VIDEO_SECONDS}s")
         continue
 
-    frames_bgr, frame_pts_all = decode_video_to_frames_and_pts(video_path)
-    total_frames = len(frames_bgr)
-
-    if total_frames == 0:
-        print("Empty video, skipping.")
-        continue
-
-    detections, frame_detections = run_sam3_for_prompt(
+    detections, frame_detections, frame_pts_all = run_sam3_for_prompt_chunked(
         model=sam3_model,
         processor=sam3_processor,
         device=device,
         dtype=dtype,
-        frames_bgr=frames_bgr,
+        video_path=video_path,
         prompt=SAM3_PROMPT,
         conf_thresh=CONF_THRES,
+        chunk_frames=CHUNK_FRAMES,
+        chunk_overlap=CHUNK_OVERLAP,
     )
 
-    frames_bgr = []
+    total_frames = len(frame_pts_all)
+    if total_frames == 0:
+        print("Empty video, skipping.")
+        continue
 
     if not detections:
         print("No relevant detections found, skipping video.")
@@ -437,58 +478,67 @@ for video_path in video_files:
         p = f
     segs.append((s, p))
 
-    last_cut_last_frame = None
-    for s, e in segs:
-        s_buf, e_buf = max(0, s - BUFFER_BEFORE), min(total_frames - 1, e + BUFFER_AFTER)
-        seg_idx = sorted(set(range(s_buf, e_buf + 1)))
-        keep_pts = np.array([frame_pts_all[idx] for idx in seg_idx], dtype=np.int64)
-        if len(keep_pts) == 0:
-            continue
+    # --------------------------------------------------------------------------
+    # EXPORT ONLY THE LONGEST SEGMENT
+    # Folder name = source_id (e.g., "..._311.mkv" -> output folder "311")
+    # --------------------------------------------------------------------------
+    s, e = max(segs, key=lambda se: (se[1] - se[0], -se[0]))
 
-        with av.open(str(video_path)) as ic_check:
-            v_check = ic_check.streams.video[0]
-            first, last = None, None
-            for pkt in ic_check.demux(v_check):
-                for f in pkt.decode():
-                    if f.pts == int(keep_pts[0]):
-                        first = f.to_ndarray(format="bgr24")
-                    if f.pts == int(keep_pts[-1]):
-                        last = f.to_ndarray(format="bgr24")
-                    if first is not None and last is not None:
-                        break
+    s_buf, e_buf = max(0, s - BUFFER_BEFORE), min(total_frames - 1, e + BUFFER_AFTER)
+    seg_idx = list(range(s_buf, e_buf + 1))
+    keep_pts = np.array([frame_pts_all[idx] for idx in seg_idx], dtype=np.int64)
+    if len(keep_pts) == 0:
+        continue
+
+    # Skip if already exported (optional but recommended)
+    out_dir = OUTPUT_DIR / str(source_id)
+    if (out_dir / "video.mkv").exists():
+        print(f"Skipping {video_path.name}: already exported to folder {out_dir.name}")
+        continue
+
+    # Read first/last frames for static duplicate check (same logic as before)
+    with av.open(str(video_path)) as ic_check:
+        v_check = ic_check.streams.video[0]
+        first, last = None, None
+        for pkt in ic_check.demux(v_check):
+            for f in pkt.decode():
+                if f.pts == int(keep_pts[0]):
+                    first = f.to_ndarray(format="bgr24")
+                if f.pts == int(keep_pts[-1]):
+                    last = f.to_ndarray(format="bgr24")
                 if first is not None and last is not None:
                     break
+            if first is not None and last is not None:
+                break
 
-        if last_cut_last_frame is not None and first is not None:
-            if is_same_scene(last_cut_last_frame, first):
-                print(f"Skipping static duplicate (videoid {video_id})")
-                continue
+    if last_cut_last_frame is not None and first is not None:
+        if is_same_scene(last_cut_last_frame, first):
+            print(f"Skipping static duplicate (source_id={source_id})")
+            continue
 
-        out_dir = OUTPUT_DIR / f"{video_id}"
-        os.makedirs(out_dir, exist_ok=True)
-        out_vid = out_dir / "video.mkv"
-        out_pts = out_dir / "frame_pts.npy"
-        out_json = out_dir / "frame_detections.json"
-        out_showdet = out_dir / SHOWDET_FILENAME
+    os.makedirs(out_dir, exist_ok=True)
+    out_vid = out_dir / "video.mkv"
+    out_pts = out_dir / "frame_pts.npy"
+    out_json = out_dir / "frame_detections.json"
+    out_showdet = out_dir / SHOWDET_FILENAME
 
-        np.save(out_pts, keep_pts)
-        export_segment(video_path, keep_pts, out_vid)
+    np.save(out_pts, keep_pts)
+    export_segment(video_path, keep_pts, out_vid)
 
-        clip_detections = {str(idx): frame_detections[idx] for idx in seg_idx if idx in frame_detections}
-        with open(out_json, "w") as f:
-            json.dump(clip_detections, f, indent=4)
+    clip_detections = {str(idx): frame_detections[idx] for idx in seg_idx if idx in frame_detections}
+    with open(out_json, "w") as f:
+        json.dump(clip_detections, f, indent=4)
 
-        if EXPORT_SHOWDET:
-            export_showdet_video_from_source(
-                source_video_path=video_path,
-                keep_pts=keep_pts,
-                seg_idx=seg_idx,
-                frame_detections=frame_detections,
-                out_path=out_showdet,
-            )
+    if EXPORT_SHOWDET:
+        export_showdet_video_from_source(
+            source_video_path=video_path,
+            keep_pts=keep_pts,
+            seg_idx=seg_idx,
+            frame_detections=frame_detections,
+            out_path=out_showdet,
+        )
 
-        last_cut_last_frame = last
-        print(f"Saved videoid {video_id} (source_id={source_id}) ({len(keep_pts)} frames, {len(clip_detections)} frames with detections)")
-        video_id += 1
+    last_cut_last_frame = last
+    print(f"Saved source_id {source_id} ({len(keep_pts)} frames, {len(clip_detections)} frames with detections)")
 
 print("\nAll videos processed ✅")
