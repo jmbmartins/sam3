@@ -5,7 +5,7 @@ import sys
 
 # ---- HARD-CODED INPUT MKV PATH ----
 INPUT_MKV = Path(
-    "/home/evox5090ia/Downloads/2025-12-23_08-56-33/video/traseira/2025-12-23_08-56-33_traseira_39.mkv"
+    "/home/evox5090ia/Downloads/test_baldeacao_mp4/2025-12-27_13-43-36_traseira_44.mp4"
 )
 # -----------------------------------
 
@@ -16,7 +16,7 @@ def main():
         sys.exit(1)
 
     # Same name, .mp4 extension
-    output_mp4 = "/home/evox5090ia/Downloads/2025-12-23_08-56-33_traseira_39.mp4"
+    output_mp4 = "/home/evox5090ia/Downloads/test_baldeacao_mp4/2025-12-27_13-43-36_traseira_44.mp4"
 
     # ffmpeg remux (no re-encode, fast, no quality loss)
     cmd = [

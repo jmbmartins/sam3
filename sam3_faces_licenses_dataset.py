@@ -1,0 +1,150 @@
+import shutil
+from pathlib import Path
+from typing import Dict, Set
+
+import torch
+import numpy as np
+from PIL import Image
+import supervision as sv
+
+from sam3.model_builder import build_sam3_image_model
+from sam3.model.sam3_image_processor import Sam3Processor
+
+
+# ================= CONFIG =================
+ROOT_DIR = Path("/home/evox5090ia/datasets/suma-sao_joao_da_madeira")
+
+PROMPTS: Dict[int, str] = {
+    0: "person",
+    1: "license plate",
+}
+
+BLACKOUT_CLASS_IDS: Set[int] = {0, 1}
+CONF_THRESH = 0.05
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
+# =========================================
+
+
+def sam_output_to_detections(masks, boxes, scores, class_id: int) -> sv.Detections:
+    boxes_np = boxes.detach().cpu().numpy().astype(np.float32)
+    scores_np = scores.detach().cpu().numpy().astype(np.float32)
+    masks_np = masks.detach().cpu().numpy()
+
+    if masks_np.ndim == 4:
+        if masks_np.shape[1] == 1:
+            masks_np = masks_np[:, 0]
+        elif masks_np.shape[-1] == 1:
+            masks_np = masks_np[..., 0]
+        else:
+            raise RuntimeError(f"Unexpected mask shape {masks_np.shape}")
+
+    masks_bin = masks_np > 0.5
+    class_ids = np.full(len(scores_np), class_id, dtype=int)
+
+    return sv.Detections(
+        xyxy=boxes_np,
+        mask=masks_bin,
+        confidence=scores_np,
+        class_id=class_ids,
+    )
+
+
+def blackout_by_class(image: Image.Image, detections: sv.Detections, class_ids_to_blackout: set[int]) -> Image.Image:
+    if detections.mask is None or len(detections) == 0:
+        return image
+
+    img_np = np.array(image)
+    sel = np.isin(detections.class_id, list(class_ids_to_blackout))
+    det_sel = detections[sel]
+
+    if len(det_sel) == 0 or det_sel.mask is None:
+        return image
+
+    masks = det_sel.mask
+    union = masks if masks.ndim == 2 else np.any(masks, axis=0)
+
+    img_np[union] = 0
+    return Image.fromarray(img_np)
+
+
+def load_rgb(path: Path) -> Image.Image | None:
+    try:
+        return Image.open(path).convert("RGB")
+    except Exception as e:
+        print(f"[WARN] Failed to load {path}: {e}")
+        return None
+
+
+def main():
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print("Using device:", device)
+
+    images_dir  = ROOT_DIR / "images"
+    labels_dir  = ROOT_DIR / "labels"
+    images_ano_dir = ROOT_DIR / "images_ano"
+    labels_ano_dir = ROOT_DIR / "labels_ano"
+
+    images_ano_dir.mkdir(parents=True, exist_ok=True)
+    labels_ano_dir.mkdir(parents=True, exist_ok=True)
+
+    image_paths = sorted(
+        p for p in images_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+    )
+
+    print(f"Found {len(image_paths)} images.\n")
+
+    print("Loading SAM3 model...")
+    model = build_sam3_image_model()
+    processor = Sam3Processor(model)
+    print("SAM3 loaded.\n")
+
+    for i, image_path in enumerate(image_paths):
+        out_image_path = images_ano_dir / image_path.name
+        label_path = labels_dir / (image_path.stem + ".txt")
+        out_label_path = labels_ano_dir / (image_path.stem + ".txt")
+
+        # Copy label as-is (anonymization only affects pixels, not annotations)
+        if label_path.exists():
+            shutil.copy2(label_path, out_label_path)
+        else:
+            out_label_path.touch()  # create empty label if missing
+
+        # Process image
+        image = load_rgb(image_path)
+        if image is None:
+            shutil.copy2(image_path, out_image_path)
+            continue
+
+        all_dets = []
+
+        for class_id, prompt in PROMPTS.items():
+            state = processor.set_image(image)
+            output = processor.set_text_prompt(state=state, prompt=prompt)
+
+            if not output or len(output.get("masks", [])) == 0:
+                continue
+
+            det = sam_output_to_detections(output["masks"], output["boxes"], output["scores"], class_id)
+            det = det[det.confidence > CONF_THRESH]
+
+            if len(det) > 0:
+                all_dets.append(det)
+
+        if not all_dets:
+            image.save(out_image_path)
+        else:
+            detections = sv.Detections.merge(all_dets)
+            blacked = blackout_by_class(image, detections, BLACKOUT_CLASS_IDS)
+            blacked.save(out_image_path)
+
+        if (i + 1) % 10 == 0 or (i + 1) == len(image_paths):
+            print(f"  [{i+1}/{len(image_paths)}] {image_path.name} done")
+
+    print("\nAll images processed.")
+    print(f"  -> {images_ano_dir}")
+    print(f"  -> {labels_ano_dir}")
+
+
+if __name__ == "__main__":
+    main()
