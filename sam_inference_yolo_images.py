@@ -15,7 +15,7 @@ from sam3.model.sam3_image_processor import Sam3Processor
 #         CONFIG
 # =========================
 INPUT_DIR = Path("/home/evox5090ia/datasets/veolia_2025-10-27_10-11-08_yolo/images")  # folder with images
-OUTPUT_DIR = Path("/datasets/suma-saojoaodamadeira/waste_collection_worker_veolia")
+OUTPUT_DIR = Path("/datasets/suma_saojoaodamadeira/waste_collection_worker_veolia")
 
 # Example prompt for graffiti:
 # TEXT_PROMPT = "spray paint graffiti or marker scribbles on the waste container surface; exclude logos, labels,
