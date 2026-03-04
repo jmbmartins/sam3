@@ -67,7 +67,7 @@ import imageio.v3 as iio
 
 # ================== HARD-CODED CONFIG ==================
 
-DATASET_ROOT = Path("/home/evox5090ia/Downloads/2026-01-16_13-49-51").resolve()
+DATASET_ROOT = Path("/home/evox5090ia/Downloads/2026-02-02_10-03-15/").resolve()
 
 VIDEO_MKV_NAME = "video.mkv"
 VIDEO_MP4_NAME = "video.mp4"

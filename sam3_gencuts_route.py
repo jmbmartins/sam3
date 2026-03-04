@@ -9,8 +9,8 @@ from transformers import Sam3VideoModel, Sam3VideoProcessor
 # --- ESSENTIAL HYPERPARAMETER CONFIGURATION ---
 # ==============================================================================
 
-INPUT_DIR = Path("/home/evox5090ia/Downloads/2026-02-02_10-03-15/video/direita/")
-OUTPUT_DIR = Path("/home/evox5090ia/Downloads/2026-02-02_10-03-15/video/direita/")
+INPUT_DIR = Path("/home/evox5090ia/rotasinprogress_veolia/2026-02-27_07-12-19/video/esquerda/")
+OUTPUT_DIR = Path("/home/evox5090ia/rotasinprogress_veolia/2026-02-27_07-12-19/video/esquerda/")
 
 # Start processing only from this source video id (inclusive).
 START_FROM_SOURCE_ID = 0  # set this as needed
