@@ -9,11 +9,11 @@ from transformers import Sam3VideoModel, Sam3VideoProcessor
 # --- ESSENTIAL HYPERPARAMETER CONFIGURATION ---
 # ==============================================================================
 
-INPUT_DIR = Path("/home/evox5090ia/rotasinprogress_sumasaojoao/2026-03-18_08-26-45/esquerda")
-OUTPUT_DIR = Path("/home/evox5090ia/rotasinprogress_sumasaojoao/2026-03-18_08-26-45/esquerda")
+INPUT_DIR = Path("/home/evox5090ia/rotasinprogress_sumasaojoao/2026-03-18_13-56-31/video/direita")
+OUTPUT_DIR = Path("/home/evox5090ia/rotasinprogress_sumasaojoao/2026-03-18_13-56-31/video/direita")
 
 # Start processing only from this source video id (inclusive).
-START_FROM_SOURCE_ID = 81  # set this as needed
+START_FROM_SOURCE_ID = 0  # set this as needed
 
 # SAM3 prompt
 SAM3_PROMPT = "waste container"
@@ -155,19 +155,32 @@ def export_segment(video_path: Path, keep_pts: np.ndarray, out_path: Path,
     keep = set(int(x) for x in keep_pts)
     with av.open(str(video_path)) as ic:
         v = ic.streams.video[0]
-        rate = _safe_rate_from_stream(v)
+        src_fps = float(_safe_rate_from_stream(v))
+        time_base = float(v.time_base) if v.time_base is not None else 1 / src_fps
 
         oc = av.open(str(out_path), "w")
-        ov = oc.add_stream(codec, rate=rate)
+        ov = oc.add_stream(codec, rate=20)
         ov.width, ov.height, ov.pix_fmt = v.width, v.height, "yuv420p"
         ov.options = {"preset": "6", "crf": str(crf)}
+
+        first_pts = int(keep_pts[0])
+        last_out_slot = -1
+
         for pkt in ic.demux(v):
             for f in pkt.decode():
-                if f.pts in keep:
-                    img = f.to_ndarray(format="bgr24")
-                    frm = av.VideoFrame.from_ndarray(img, format="bgr24")
-                    for p in ov.encode(frm):
-                        oc.mux(p)
+                if f.pts not in keep:
+                    continue
+                # which 20fps slot does this frame fall into?
+                elapsed_sec = (int(f.pts) - first_pts) * time_base
+                out_slot = int(elapsed_sec * 20)
+                if out_slot <= last_out_slot:
+                    continue  # already have a frame for this slot, skip
+                last_out_slot = out_slot
+                img = f.to_ndarray(format="bgr24")
+                frm = av.VideoFrame.from_ndarray(img, format="bgr24")
+                for p in ov.encode(frm):
+                    oc.mux(p)
+
         for p in ov.encode(None):
             oc.mux(p)
         oc.close()
@@ -209,11 +222,16 @@ def export_showdet_video_from_source(
         v = ic.streams.video[0]
         src_rate = _safe_rate_from_stream(v)
 
-        oc = av.open(str(out_path), "w")
+        # ✅ faststart: moov atom written at the front so browser reads duration immediately
+        oc = av.open(str(out_path), "w", options={"movflags": "faststart"})
         ov = oc.add_stream(SHOWDET_CODEC, rate=src_rate)
         ov.options = {"preset": SHOWDET_PRESET, "crf": str(SHOWDET_CRF)}
 
-        initialized = False
+        # ✅ set dimensions before the loop from source stream, not lazily on first frame
+        target_w = SHOWDET_SCALE_WIDTH or v.width
+        target_h = v.height if SHOWDET_SCALE_WIDTH is None else int(v.height * target_w / v.width)
+        ov.width, ov.height = target_w, target_h
+        ov.pix_fmt = "yuv420p"
 
         for pkt in ic.demux(v):
             for f in pkt.decode():
@@ -227,11 +245,6 @@ def export_showdet_video_from_source(
                     img = draw_detections(img, frame_detections[orig_idx])
 
                 img = maybe_resize(img, SHOWDET_SCALE_WIDTH)
-
-                if not initialized:
-                    ov.width, ov.height = img.shape[1], img.shape[0]
-                    ov.pix_fmt = "yuv420p"
-                    initialized = True
 
                 frm = av.VideoFrame.from_ndarray(img, format="bgr24")
                 for p in ov.encode(frm):
