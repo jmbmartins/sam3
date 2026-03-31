@@ -12,7 +12,7 @@ from sam3.model.sam3_image_processor import Sam3Processor
 
 
 # ================= CONFIG =================
-ROOT_DIR = Path("/home/evox5090ia/rotasinprogress_sumasaojoao/2026-03-18_08-26-45/video/direita")
+ROOT_DIR = Path("/home/evox5090ia/rotasinprogress_sumasaojoao/2026-03-18_13-56-31/video/direita")
 
 PROMPTS: Dict[int, str] = {
     0: "person",
@@ -87,6 +87,7 @@ def main():
 
     # each "videoid" dir: .../direita/<id>/
     video_dirs = sorted(d for d in ROOT_DIR.iterdir() if d.is_dir())
+    print(f"[DEBUG] Found {len(video_dirs)} video dirs: {[d.name for d in video_dirs]}")
 
     for video_dir in video_dirs:
         frames_dir = video_dir / "frames"
