@@ -16,13 +16,16 @@ import imageio.v3 as iio  # pip install "imageio[ffmpeg]"
 
 
 # --------- CONFIGURE THESE ---------
-VIDEO_PATH = "/home/evox5090ia/Downloads/2025-10-01_03-48-58_d_59.mp4"
-TEXT_PROMPT = "license plates"
-OUTPUT_PATH = "/home/evox5090ia/sam3/sam3_outputs/2025-10-01_03-48-58_d_159_waste_container.mp4"
+VIDEO_PATH = "/home/evox5090ia/experiments/helmet_detection/examples/pos_cb_000076.mp4"
+TEXT_PROMPT = "helmet"
+DISPLAY_LABEL = "capacete"
+OUTPUT_PATH = "/home/evox5090ia/experiments/helmet_detection/outputs_examples/sam_pos_cb_000076.mp4"
 
-CONF_THRESH = 0.05
+CONF_THRESH = 0
+DRAW_BOXES = True
+DRAW_MASKS = False
 # Use your real video FPS if you know it; otherwise 25 or 30 are usually OK.
-OUTPUT_FPS = 10
+OUTPUT_FPS = None
 # -----------------------------------
 
 
@@ -36,7 +39,9 @@ COLOR = sv.ColorPalette.from_hex([
 def annotate(
     image: Image.Image,
     detections: sv.Detections,
-    label: Optional[str] = None
+    label: Optional[str] = None,
+    draw_boxes: bool = True,
+    draw_masks: bool = True,
 ) -> Image.Image:
     # Compute a text scale adapted to resolution
     text_scale = sv.calculate_optimal_text_scale(resolution_wh=image.size)
@@ -61,8 +66,11 @@ def annotate(
     )
 
     annotated_image = image.copy()
-    annotated_image = mask_annotator.annotate(annotated_image, detections)
-    annotated_image = box_annotator.annotate(annotated_image, detections)
+    if draw_masks:
+        annotated_image = mask_annotator.annotate(annotated_image, detections)
+
+    if draw_boxes:
+        annotated_image = box_annotator.annotate(annotated_image, detections)
 
     if label:
         # Show track id + prompt + confidence
@@ -226,7 +234,13 @@ def main():
             frames_to_write.append(np.array(frame_pil))
             continue
 
-        annotated_pil = annotate(frame_pil, detections, label=TEXT_PROMPT)
+        annotated_pil = annotate(
+            frame_pil,
+            detections,
+            label=DISPLAY_LABEL,
+            draw_boxes=DRAW_BOXES,
+            draw_masks=DRAW_MASKS,
+        )
         frames_to_write.append(np.array(annotated_pil))
 
     # Write annotated video

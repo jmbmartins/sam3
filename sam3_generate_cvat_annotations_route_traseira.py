@@ -67,7 +67,7 @@ import imageio.v3 as iio
 
 # ================== HARD-CODED CONFIG ==================
 
-DATASET_ROOT = Path("/home/evox5090ia/rotasinprogress_sumasaojoao_tremonha/indiferenciado_2026-03-18_08-26-45").resolve()
+DATASET_ROOT = Path("/home/evox5090ia/rotes_in_progress_baldeacao/vidro_2025-12-27_13-43-36").resolve()
 
 VIDEO_MKV_NAME = "video.mkv"
 VIDEO_MP4_NAME = "video.mp4"
@@ -80,7 +80,8 @@ CONF_THRESH = 0.05
 
 PROMPTS = [
     ("person", "pessoa", 0),
-    ("license plates", "matricula", 1)
+    ("license plates", "matricula", 1),
+    ("black trash bag", "saco", 16)
     # ("waste container", "waste container", 20),
 ]
 

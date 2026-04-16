@@ -12,7 +12,7 @@ from sam3.model.sam3_image_processor import Sam3Processor
 
 
 # ================= CONFIG =================
-ROOT_DIR = Path("/home/evox5090ia/rotasinprogress_sumasaojoao_tremonha/plastico_metal_2026-02-24_14-37-30/video/traseira")
+ROOT_DIR = Path("/home/evox5090ia/rotes_in_progress_baldeacao/vidro_2025-12-27_13-43-36/video/traseira")
 
 PROMPTS: Dict[int, str] = {
     0: "person",

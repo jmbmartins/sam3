@@ -17,11 +17,11 @@ import imageio.v3 as iio  # pip install "imageio[ffmpeg]"
 import subprocess
 
 # --------- CONFIGURE THESE ---------
-VIDEO_PATH = "/home/evox5090ia/Downloads/2025-12-23_08-56-33/video/traseira/2025-12-23_08-56-33_traseira_75.mkv"  # Now supports MKV
-TEXT_PROMPT = "large object"
+VIDEO_PATH = "/home/evox5090ia/Downloads/2026-03-03_15-25-16_traseira_11.mkv"  # Now supports MKV
+TEXT_PROMPT = "operator without helmet?"
 OUTPUT_PATH = "/home/evox5090ia/Downloads/output.mp4"
 
-CONF_THRESH = 0.05
+CONF_THRESH = 0.5
 OUTPUT_FPS = 10
 
 # ===== MEMORY OPTIMIZATION SETTINGS =====
