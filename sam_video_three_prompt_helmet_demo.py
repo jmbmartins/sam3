@@ -11,7 +11,7 @@ import imageio.v3 as iio
 import numpy as np
 import torch
 from accelerate import Accelerator
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from transformers import Sam3VideoModel, Sam3VideoProcessor
 from transformers.video_utils import load_video
 
@@ -31,15 +31,15 @@ FRAME_SKIP = 1
 MAX_RESOLUTION = None  # Example: (1280, 720)
 USE_CPU_OFFLOAD = True
 
-OPERATOR_CONF = 0.60
-HELMET_CONF = 0.45
-FACE_CONF = 0.60
+OPERATOR_CONF = 0.50
+HELMET_CONF = 0.35
+FACE_CONF = 0.45
 
 TRACK_IOU_THRESH = 0.30
-STATE_WINDOW = 12
-NO_HELMET_MIN_FRAMES = 6
-HELMET_HOLD_FRAMES = 5
-RECENT_HELMET_VETO_FRAMES = 8
+STATE_WINDOW = 8
+NO_HELMET_MIN_FRAMES = 2
+HELMET_HOLD_FRAMES = 2
+RECENT_HELMET_VETO_FRAMES = 2
 MAX_TRACK_MISSES = 20
 
 UPPER_BODY_RATIO = 0.30
@@ -54,10 +54,14 @@ FACE_MAX_HEIGHT_RATIO = 0.18
 HELMET_MAX_AREA_RATIO = 0.02
 HELMET_MAX_WIDTH_RATIO = 0.16
 HELMET_MAX_HEIGHT_RATIO = 0.16
-FACE_HEADROOM_RATIO = 0.06
-STRONG_FACE_CENTER_Y_MAX_RATIO = 0.30
-STRONG_FACE_WIDTH_MIN_RATIO = 0.06
-STRONG_FACE_HEIGHT_MIN_RATIO = 0.06
+FACE_HEADROOM_RATIO = 0.02
+STRONG_FACE_CENTER_Y_MAX_RATIO = 0.40
+STRONG_FACE_WIDTH_MIN_RATIO = 0.03
+STRONG_FACE_HEIGHT_MIN_RATIO = 0.03
+LABEL_FONT_SIZE = 22
+LABEL_PADDING_X = 6
+LABEL_PADDING_Y = 3
+LABEL_MARGIN = 2
 # -----------------------------------
 
 
@@ -371,6 +375,18 @@ def helmet_is_plausible_for_operator(helmet_box: np.ndarray, operator_box: np.nd
     return point_inside_box(center_of(helmet_box), head_box) or compute_iou(helmet_box, head_box) > 0.10
 
 
+def load_label_font(size: int) -> ImageFont.ImageFont:
+    for font_path in (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ):
+        try:
+            return ImageFont.truetype(font_path, size=size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
 def infer_operator_state(
     operator_box: np.ndarray,
     operator_score: float,
@@ -428,12 +444,12 @@ def infer_operator_state(
             oversized_operator=oversized_operator,
             diagnostics=diagnostics,
         )
-    if strong_faces:
+    if valid_faces:
         return OperatorDecision(
             raw_state="no_helmet",
-            reason="strong face evidence and helmet absent",
+            reason="face visible and helmet absent",
             operator_score=operator_score,
-            face_records=strong_faces,
+            face_records=valid_faces,
             helmet_records=matched_helmets,
             oversized_operator=oversized_operator,
             diagnostics=diagnostics,
@@ -459,6 +475,8 @@ def draw_demo_frame(
 ) -> Image.Image:
     annotated = image.convert("RGB")
     draw = ImageDraw.Draw(annotated)
+    font = load_label_font(LABEL_FONT_SIZE)
+    image_w, image_h = annotated.size
 
     for helmet in helmet_records:
         draw.rectangle([tuple(helmet.box[:2]), tuple(helmet.box[2:])], outline="#33cc66", width=2)
@@ -488,11 +506,29 @@ def draw_demo_frame(
             "no_helmet": "no helmet",
             "unknown": "unknown",
         }[state]
-        x1 = float(operator.box[0])
-        y1 = max(0.0, float(operator.box[1]) - 18.0)
-        label_w = 12 + 7 * len(label)
-        draw.rectangle([x1, y1, x1 + label_w, y1 + 16], fill=(0, 0, 0))
-        draw.text((x1 + 4, y1 + 2), label, fill=color)
+        box_x1 = float(operator.box[0])
+        box_y1 = float(operator.box[1])
+        box_y2 = float(operator.box[3])
+        label_bbox = draw.textbbox((0, 0), label, font=font)
+        text_w = label_bbox[2] - label_bbox[0]
+        text_h = label_bbox[3] - label_bbox[1]
+        label_w = text_w + (2 * LABEL_PADDING_X)
+        label_h = text_h + (2 * LABEL_PADDING_Y)
+
+        x1 = min(max(0.0, box_x1), max(0.0, image_w - label_w))
+        above_y = box_y1 - label_h - LABEL_MARGIN
+        inside_y = box_y1 + LABEL_MARGIN
+        below_y = box_y2 + LABEL_MARGIN
+
+        if above_y >= 0:
+            y1 = above_y
+        elif inside_y + label_h <= image_h:
+            y1 = inside_y
+        else:
+            y1 = max(0.0, min(below_y, image_h - label_h))
+
+        draw.rectangle([x1, y1, x1 + label_w, y1 + label_h], fill=(0, 0, 0))
+        draw.text((x1 + LABEL_PADDING_X, y1 + LABEL_PADDING_Y), label, fill=color, font=font)
 
     return annotated
 
